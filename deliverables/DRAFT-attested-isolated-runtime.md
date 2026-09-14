@@ -139,8 +139,11 @@ work completes supports recordkeeping and leaves the outcome of the work unchang
 Each session or action produces a signed record covering what executed, under which policy
 digest and enforcement mode, against what data class, and which tools were invoked. A verifier
 independent of the operator appraises that evidence against reference values and revocation
-state, then issues a signed result the relying party consumes. Anchoring records in an
-append-only transparency log lets a third party confirm a record existed and was not withheld.
+state, then issues a signed result the relying party consumes. When records are anchored in an
+append-only transparency log, a verified inclusion receipt establishes that a particular record
+is included at the authenticated checkpoint. It does not establish that every relevant action
+was recorded. A completeness claim also needs a declared collection scope and a way to account
+for expected records that are missing.
 
 Separating the verifier from the relying party has a practical payoff: tools avoid implementing
 platform-specific quote parsing, and vendor verification logic lives in one place.
@@ -206,6 +209,13 @@ and in most organizations today it has none.
 evidence lets teams develop, test, and run conformance suites with no confidential computing
 hardware, and lets relying-party policy distinguish the two assurance levels explicitly.
 Adoption stalls at hardware procurement without it.
+
+Acceptance condition: hold the action identifier, policy identifier, and other authorization
+inputs fixed. Under a relying-party policy that requires hardware attestation, a
+signed-but-unattested record must not authorize release. A hardware-backed record must authorize
+release when its evidence passes appraisal and all remaining policy conditions are satisfied.
+Record the enforcement mode and appraisal result separately; matching record structure must not
+erase the assurance distinction.
 
 > **Open question.** Whether this catalog wants a shared assurance vocabulary that other
 > patterns and other working groups can reference, covering signed, attested, and
