@@ -108,21 +108,41 @@ outside.
 Draw the boundary so that a fully compromised agent still cannot alter policy, forge evidence,
 or read data the policy denied it.
 
+Name where sensitive input is decrypted and which components may hold it in plaintext. Inside
+the boundary that is the decision point and the classification and redaction logic. Anything
+released to the agent, including an allowed raw tool response or a sensitive prompt, sits in
+agent memory the host can read, so the redaction step decides what leaves the boundary.
+Confidential processing elsewhere, such as inference on a confidential GPU, carries its own
+protection and trust assumptions and is stated separately.
+
+Acceptance condition: an authorized request whose raw response reaches agent memory is reported
+as outside the confidentiality claim.
+
 > **Open question.** This placement is the pattern's strongest claim. A workstream member who
 > believes the agent belongs inside the boundary should say so, because the rest of the pattern
 > follows from this line.
 
 ### 2. Generate the signing key inside the boundary and bind evidence to it
 
-The key that signs evidence gets generated inside the isolated environment, never leaves it,
-and has its public part included in the attested measurement so a verifier can confirm the key
-originated there.
+The key that signs evidence gets generated inside the isolated environment and never leaves it.
+Its public part goes into the attestation evidence, so the evidence binds the key to the
+measured environment.
+
+That binding authenticates the association. It does not show where the key was generated. A
+verifier accepts in-boundary origin only when the appraised code is the code that generates the
+key pair, keeps the private key in protected memory, has no export path, and refuses to present
+an externally supplied key as its own. Proof of possession shows the presenter holds the private
+key. It does not show the key was never outside.
 
 Skipping this element is the most common implementation error, and it quietly removes most of
 the value. Attestation evidence with no binding to the key signing the requests describes a
 machine and can be replayed by any party holding a copy. RFC 8747 defines the
-proof-of-possession confirmation claim for this purpose and RFC 9711 carries it in an
-attestation token.
+proof-of-possession confirmation claim for this purpose (section 3), and its security
+considerations require a separate protocol that demonstrates possession, so a deployment names
+the one it uses. RFC 9711 carries the claim in an attestation token.
+
+Acceptance condition: substitute a host-generated key whose holder can prove possession. It must
+fail acceptance as an in-boundary key.
 
 ### 3. Seal policy to the measurement and release data on appraisal
 
@@ -134,16 +154,41 @@ appraisal before releasing credentials, decryption keys, or scopes.
 Gating release on the appraisal is what makes attestation a control. Evidence emitted after the
 work completes supports recordkeeping and leaves the outcome of the work unchanged.
 
+A reported digest is only as good as its link to the bytes the evaluator loads. The measured
+loader verifies the effective policy bytes against the digest before evaluation, and each
+authorization carries that digest through to the operation it permits. Two ways hold the link:
+an immutable bundle inside the measured image, or authenticated dynamic loading with an explicit
+update rule under which a change to the effective policy invalidates authorizations and
+appraisals issued under the old one. Prompt and tool-schema digests (see Implementation notes)
+have the same limit when the component that consumes them runs outside the boundary: the digest
+records what was approved, and says nothing about what that component used. RFC 9711 section
+9.1 makes claim trust depend on the implementation and on verifier processing for the same
+reason.
+
+Acceptance condition: replace the effective bundle P with Q while the environment still reports
+the digest of P. Every authorization issued after the swap must fail.
+
 ### 4. Emit verifiable evidence per unit of work and have a separate party appraise it
 
-Each session or action produces a signed record covering what executed, under which policy
-digest and enforcement mode, against what data class, and which tools were invoked. A verifier
+Each session or action produces a signed record covering what executed inside the boundary,
+under which policy digest and enforcement mode, against what data class, and which tool calls
+were authorized. A verifier
 independent of the operator appraises that evidence against reference values and revocation
 state, then issues a signed result the relying party consumes. When records are anchored in an
 append-only transparency log, a verified inclusion receipt establishes that a particular record
 is included at the authenticated checkpoint. It does not establish that every relevant action
 was recorded. A completeness claim also needs a declared collection scope and a way to account
 for expected records that are missing.
+
+Keep four stages distinct in the record: requested, authorized, dispatched, and confirmed by the
+tool. Each claim names the component that observed it. With tools outside the boundary, the
+decision point observes the request and the authorization and nothing after. A claim that a tool
+executed, or returned a given result, needs evidence bound to the request from an observer
+trusted for that claim, such as the enforcement point or a signed tool response. A report the
+agent supplies stays marked as agent-supplied.
+
+Acceptance condition: drop an authorized call before dispatch. The record holds an authorization
+and no tool-execution claim.
 
 Separating the verifier from the relying party has a practical payoff: tools avoid implementing
 platform-specific quote parsing, and vendor verification logic lives in one place.
@@ -156,23 +201,25 @@ platform-specific quote parsing, and vendor verification logic lives in one plac
   | Agent runtime          |          | Policy decision point            |
   |  model inference       |          |  sealed policy bundle digest     |
   |  planner, memory       |-- call --| Classification and redaction     |
-  |  tool clients          |<-verdict-| Evidence signer                  |
-  +------------------------+          |  key generated in-boundary       |
+  |  tool clients          |<-scoped--| Evidence signer                  |
+  +------------------------+   auth   |  key generated in-boundary       |
              |                        +---------------+------------------+
-             |                          measurement   |  signed evidence
+             | call + scoped auth       measurement   |  signed evidence
              v                          + bound key    v
   +------------------------+          +----------------------------------+
-  | Tools, data sources    |<- keys --| Verifier (independent party)     |
-  | (relying parties)      | released |  reference values, revocation    |
-  +------------------------+ on pass  |  issues signed appraisal         |
-                                      +---------------+------------------+
+  | Enforcement point      |<- keys --| Verifier (independent party)     |
+  |  rejects unscoped call | released |  reference values, revocation    |
+  | Tools, data sources    | on pass  |  issues signed appraisal         |
+  | (relying parties)      |          +---------------+------------------+
+  +------------------------+                          |
                                                       v
                                       +----------------------------------+
                                       | Transparency log (optional)      |
                                       +----------------------------------+
 ```
 
-The agent sits on the untrusted side of the boundary. That placement is the pattern.
+The agent sits on the untrusted side of the boundary. That placement is the pattern. Its only
+route to a tool runs through an enforcement point that checks the scoped authorization.
 
 ## Implementation notes
 
@@ -180,6 +227,19 @@ The agent sits on the untrusted side of the boundary. That placement is the patt
 tool-call boundary: intercept, evaluate, redact, and sign inside the boundary, and leave the
 client and the tool implementations outside it. Agent-to-agent paths have their seam at the
 delegation issuance point.
+
+**Enforce where the agent cannot route around it.** A verdict returned to the agent is advice.
+A compromised agent can skip an optional interceptor, call the tool directly, or change the
+resource or arguments after evaluation while its runtime appraisal stays valid. Each protected
+operation passes an enforcement point the agent cannot bypass: a gateway inside the boundary
+that makes the call, or a tool that accepts only an authorization bound to the evaluated
+operation, resource, and intended recipient. Credentials released on appraisal carry the same
+scope. Freshness applies to the action authorization and to the appraisal behind it, since a
+freshly signed authorization can carry an expired appraisal (RFC 9334 section 10).
+
+Acceptance condition: under the stated policy, a direct tool call without authorization, a call
+whose arguments differ from those evaluated, and a call carrying an expired appraisal are each
+rejected.
 
 **Extend the measurement chain past the platform.** Firmware, kernel, and image measurements
 tell a verifier which container executed. They say nothing about the system prompt, the tool
@@ -230,7 +290,8 @@ erase the assurance distinction.
 - The host operator moves from trusted to untrusted, which is what makes cross-organization
   claims about an agent checkable.
 - Policy enforcement and its evidence stop sharing a fate with the workload they govern.
-- Data in use gains protection, closing the plaintext execution window.
+- Data in use gains protection on the protected path: the decision point, classification and
+  redaction, and the signer. Plaintext released to the agent stays readable by the host.
 - A relying party decides on evidence and needs no audit relationship with the operator.
 
 ### What the pattern costs
