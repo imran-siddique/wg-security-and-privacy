@@ -137,9 +137,10 @@ key. It does not show the key was never outside.
 Skipping this element is the most common implementation error, and it quietly removes most of
 the value. Attestation evidence with no binding to the key signing the requests describes a
 machine and can be replayed by any party holding a copy. RFC 8747 defines the
-proof-of-possession confirmation claim for this purpose (section 3), and its security
-considerations require a separate protocol that demonstrates possession, so a deployment names
-the one it uses. RFC 9711 carries the claim in an attestation token.
+proof-of-possession confirmation claim for this purpose (section 3). It leaves the protocol
+for demonstrating possession unspecified (section 3.5) and notes that possession proof helps
+only when it is fresh and replay-resistant (section 4), so a deployment names the protocol it
+uses. An RFC 9711 attestation token can carry this registered CWT claim.
 
 Acceptance condition: substitute a host-generated key whose holder can prove possession. It must
 fail acceptance as an in-boundary key.
@@ -150,6 +151,15 @@ Bind the policy bundle digest into the attested measurement so that a relying pa
 the measurement simultaneously learns which rules were in force. Then order the operations so
 that the relying party, or a key release service acting for the data owner, verifies the
 appraisal before releasing credentials, decryption keys, or scopes.
+
+The release service encrypts credentials and decryption keys to a recipient key bound into the
+attestation evidence. That key must meet the in-boundary origin and custody requirements in
+element 2; a separate encryption-capable key follows the same requirements as the signing key.
+The verifier issues the appraisal, and the relying party or its release service makes the
+release decision and sends the encrypted secrets to the isolated environment.
+
+Acceptance condition: a release addressed to a key the appraised environment did not generate
+must fail, even when the appraisal passes.
 
 Gating release on the appraisal is what makes attestation a control. Evidence emitted after the
 work completes supports recordkeeping and leaves the outcome of the work unchanged.
@@ -166,7 +176,8 @@ records what was approved, and says nothing about what that component used. RFC 
 reason.
 
 Acceptance condition: replace the effective bundle P with Q while the environment still reports
-the digest of P. Every authorization issued after the swap must fail.
+the digest of P. Every authorization issued under P and presented after the swap, and every
+authorization issued after the swap, must fail.
 
 ### 4. Emit verifiable evidence per unit of work and have a separate party appraise it
 
@@ -200,22 +211,33 @@ platform-specific quote parsing, and vendor verification logic lives in one plac
   +------------------------+          +----------------------------------+
   | Agent runtime          |          | Policy decision point            |
   |  model inference       |          |  sealed policy bundle digest     |
-  |  planner, memory       |-- call --| Classification and redaction     |
+  |  planner, memory       |-- call ->| Classification and redaction     |
   |  tool clients          |<-scoped--| Evidence signer                  |
-  +------------------------+   auth   |  key generated in-boundary       |
-             |                        +---------------+------------------+
-             | call + scoped auth       measurement   |  signed evidence
-             v                          + bound key    v
-  +------------------------+          +----------------------------------+
-  | Enforcement point      |<- keys --| Verifier (independent party)     |
-  |  rejects unscoped call | released |  reference values, revocation    |
-  | Tools, data sources    | on pass  |  issues signed appraisal         |
-  | (relying parties)      |          +---------------+------------------+
-  +------------------------+                          |
-                                                      v
-                                      +----------------------------------+
-                                      | Transparency log (optional)      |
-                                      +----------------------------------+
+  +------------------------+   auth   |  keys generated in-boundary      |
+             |                        +----------------------------------+
+             | call + scoped auth
+             v
+  +------------------------+
+  | Enforcement point      |
+  |  rejects unscoped call |
+  | Tools, data sources    |
+  | (relying parties)      |
+  +------------------------+
+
+  Appraisal and release flow:
+
+  Isolated environment
+      | measurement + bound keys + signed evidence
+      v
+  Independent verifier (reference values, revocation)
+      | signed appraisal
+      v
+  Relying party / key release service
+      | on acceptance: secrets encrypted to the attested recipient key
+      v
+  Isolated environment
+
+  Signed records --> Transparency log (optional)
 ```
 
 The agent sits on the untrusted side of the boundary. That placement is the pattern. Its only
