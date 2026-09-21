@@ -112,6 +112,9 @@ Name where sensitive input is decrypted and which components may hold it in plai
 the boundary that is the decision point and the classification and redaction logic. Anything
 released to the agent, including an allowed raw tool response or a sensitive prompt, sits in
 agent memory the host can read, so the redaction step decides what leaves the boundary.
+Response redaction applies to calls and responses that traverse the protected gateway.
+Under tool-side enforcement, a direct tool response to the agent is outside this redaction
+path and retains the confidentiality limit stated above.
 Confidential processing elsewhere, such as inference on a confidential GPU, carries its own
 protection and trust assumptions and is stated separately.
 
@@ -258,10 +261,17 @@ that makes the call, or a tool that accepts only an authorization bound to the e
 operation, resource, and intended recipient. Credentials released on appraisal carry the same
 scope. Freshness applies to the action authorization and to the appraisal behind it, since a
 freshly signed authorization can carry an expired appraisal (RFC 9334 section 10).
+Bind each action authorization to an issuer-scoped, single-use action identifier. Before
+dispatch, the enforcement point atomically records that identifier as spent. Consumption state
+survives restart and is shared by every instance that can accept the authorization; an
+unavailable or uncertain consumption check prevents dispatch. A failed or uncertain dispatch
+keeps the identifier spent, while the evidence records the outcome separately.
 
 Acceptance condition: under the stated policy, a direct tool call without authorization, a call
 whose arguments differ from those evaluated, and a call carrying an expired appraisal are each
-rejected.
+rejected. Replaying an authorization after its first use, concurrently at another enforcement
+instance, or after restart must not dispatch a second action. An uncertain first dispatch
+must not make the authorization reusable.
 
 **Extend the measurement chain past the platform.** Firmware, kernel, and image measurements
 tell a verifier which container executed. They say nothing about the system prompt, the tool
@@ -395,7 +405,7 @@ Identity and Trust WG. A companion draft has been offered there so the two land 
 - RFC 9334, Remote ATtestation procedureS (RATS) Architecture
 - RFC 9711, Entity Attestation Token
 - RFC 8747, Proof-of-Possession Key Semantics for CWTs
-- IETF SCITT, Supply Chain Integrity, Transparency and Trust
+- [RFC 9943, An Architecture for Trustworthy and Transparent Digital Supply Chains](https://www.rfc-editor.org/rfc/rfc9943.html) (SCITT)
 - SLSA build provenance
 
 ### Hardware attestation stacks
